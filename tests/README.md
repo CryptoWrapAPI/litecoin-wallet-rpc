@@ -36,6 +36,11 @@ Tests the `/derive` endpoint — derives wallet addresses from a BIP84 master pr
 
 **Setup:** Edit the script and set your master private key (`XPRV`, prefix `ttpv...`/`xprv...`), `ACCOUNT_INDEX`, and `ADDRESS_INDEX`.
 
+### `test_build_and_send.py`
+Tests the `/build-and-send` endpoint — derives addresses, gathers UTXOs, builds, signs, and broadcasts a segwit transaction.
+
+**Setup:** Edit the script and set `MASTER_XPRV`, `INPUTS`, `TARGET_ADDRESS`, `TARGET_AMOUNT`, and `CHANGE_ADDRESS` to match your wallet and target.
+
 ## Running
 
 ```bash
@@ -44,4 +49,5 @@ Tests the `/derive` endpoint — derives wallet addresses from a BIP84 master pr
 ../env12/bin/python test_listunspent.py
 ../env12/bin/python test_transactions.py
 ../env12/bin/python test_derive.py
+../env12/bin/python test_build_and_send.py
 ```

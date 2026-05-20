@@ -14,6 +14,7 @@ All script hash conversions are handled in memory. SQLite can optionally be adde
 - **Transaction Details**: Fetch verbose transaction data for multiple tx hashes in a single batch request
 - **Balance Query**: Get confirmed and unconfirmed balances for wallet addresses
 - **List Unspent Outputs**: List UTXOs for wallet addresses (via `blockchain.scripthash.listunspent`)
+- **Build and Send**: Derive addresses from a master key, gather UTXOs, construct, sign, and broadcast a segwit transaction
 - **Block Height Subscription**: Real-time block height notifications via ElectrumX subscription
 - **Address-to-Script-Hash Conversion**: P2WPKH support for mainnet and testnet
 - **Comprehensive Error Handling**: Logging, connection recovery (1 reconnection attempt on failure)
@@ -258,6 +259,55 @@ List unspent transaction outputs (UTXOs) for wallet addresses.
 
 Values are in satoshis (minimum coin units). Mempool transactions have `height: 0`.
 
+### `POST /build-and-send`
+
+Derive addresses from a master private key, gather all UTXOs from them, build a segwit transaction, sign it, and broadcast to the network.
+
+**Request:**
+```json
+{
+  "master_xprv": "ttpv96BtqegdxXceR3PxQNr7cdoutq7qhY1rF7gYGm3JLTLbc3B61uzCid39tKD5PEx5BTdVD6LdkwJ3uheM6pFBaSfEvjeziWkDA59yfxYDMiz",
+  "inputs": [
+    { "account_index": 0, "address_index": 0 }
+  ],
+  "target_address": "tltc1qf3243s82cp9z38jhsj7ejzvvtjd4swkz5y73gx",
+  "target_amount": 50000,
+  "change_address": "tltc1q3lzvvc00gmz5c8kal6tw0avna65zrk4wf9mj75"
+}
+```
+
+| Field | Description |
+|---|---|
+| `master_xprv` | BIP84 master private key (`ttpv...`/`xprv...`) |
+| `inputs` | List of (account_index, address_index) pairs to derive addresses and collect UTXOs from |
+| `target_address` | Destination address for the payment |
+| `target_amount` | Amount in satoshis to send to target_address |
+| `change_address` | Address to send the remainder (minus miner fee) |
+
+The miner fee is hardcoded at **2000 satoshis**. Change is calculated as `total_input_value - target_amount - 2000`.
+
+**Success response:**
+```json
+{
+  "tx_hash": "ce33f50e04a4387dc77d22fd1292d332785bf4b9aad5fc6a1a57494ce8301191",
+  "raw_tx": "01000000000101059798778a323fab494cb585942044e11e6d71cc536f9b20fdc343939981f1cf0100000000ffffffff0250c30000000000001600144c5558c0eac04a289e5784bd99098c5c9b583ac220770e00000000001600148fc4c661ef46c54c1eddfe96e7f593eea821daae024830450221008d319f96928db67ff59548d8421910ece9bc478fd461c9b13558a523aef5b769022015ca497e033c73e7a988f3d5b73971a05ccada4f039d3e09d8e726c44e9b1b7f0121024bfacfda7f5bb8401cc0d92e307c23bc8aec0abdb95d93d5ea323d216d7ba80c00000000",
+  "total_input": 1000000,
+  "target_amount": 50000,
+  "miner_fee": 2000,
+  "change_amount": 948000,
+  "change_address": "tltc1q3lzvvc00gmz5c8kal6tw0avna65zrk4wf9mj75",
+  "utxo_count": 1,
+  "timestamp": "2026-05-20T23:34:11.377124+00:00"
+}
+```
+
+**Failure response** (e.g. no UTXOs found):
+```json
+{
+  "detail": "No UTXOs found for any input address"
+}
+```
+
 ## Running Tests
 
 See [tests/README.md](tests/README.md) for test setup and usage instructions.
@@ -269,6 +319,8 @@ See [tests/README.md](tests/README.md) for test setup and usage instructions.
 | Invalid address | 400 | Descriptive error message |
 | Invalid tx hash | 400 | Must be 64-char hex string |
 | Invalid derivation key | 400 | Unsupported depth or malformed key |
+| No UTXOs found | 400 | Input addresses have no spendable outputs |
+| Insufficient funds | 400 | UTXO total < target_amount + fee |
 | Connection lost | 503 | After 1 reconnection attempt fails |
 | Query error | 500 | Error details logged on server |
 

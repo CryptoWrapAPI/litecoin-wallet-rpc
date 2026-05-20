@@ -105,6 +105,23 @@ class BroadcastRequest(BaseModel):
     raw_tx: str
 
 
+class AddressPair(BaseModel):
+    """Account and address index for derivation."""
+
+    account_index: int = 0
+    address_index: int = 0
+
+
+class BuildAndSendRequest(BaseModel):
+    """Request to build, sign, and broadcast a transaction."""
+
+    master_xprv: str
+    inputs: list[AddressPair]
+    target_address: str
+    target_amount: int
+    change_address: str
+
+
 # ============================================================================
 # ElectrumX Client
 # ============================================================================
@@ -825,3 +842,142 @@ async def broadcast_transaction(request: BroadcastRequest):
     except Exception as e:
         log.error(f"Error broadcasting transaction: {e}")
         raise HTTPException(status_code=500, detail=f"Broadcast failed: {e}")
+
+
+MINER_FEE = 2000
+
+
+@app.post("/build-and-send")
+async def build_and_send(request: BuildAndSendRequest):
+    """Build, sign, and broadcast a transaction from wallet UTXOs."""
+    if not electrum_client:
+        raise HTTPException(status_code=503, detail="ElectrumX not connected")
+
+    log.info("=" * 60)
+    log.info("BUILD-AND-SEND STARTED")
+    log.info("=" * 60)
+    log.info(f"Target address: {request.target_address}")
+    log.info(f"Target amount: {request.target_amount}")
+    log.info(f"Change address: {request.change_address}")
+    log.info(f"Input pairs: {[p.model_dump() for p in request.inputs]}")
+
+    # ------------------------------------------------------------------ Step 1
+    log.info("--- Step 1: Derive addresses and private keys ---")
+    derived = []
+    for pair in request.inputs:
+        log.info(f"Deriving account_index={pair.account_index}, address_index={pair.address_index}")
+        try:
+            bip84_mst = Bip84.FromExtendedKey(request.master_xprv, NETWORK_TYPE)
+            bip84_acc = bip84_mst.Purpose().Coin().Account(pair.account_index)
+            bip84_receive = bip84_acc.Change(Bip44Changes.CHAIN_EXT)
+            addr_ctx = bip84_receive.AddressIndex(pair.address_index)
+            address = addr_ctx.PublicKey().ToAddress()
+            wif = addr_ctx.PrivateKey().ToWif()
+            log.info(f"  Address: {address}")
+            log.info(f"  WIF:     {wif[:8]}...{wif[-4:]}")
+            derived.append({"address": address, "wif": wif, "pair": pair})
+        except Exception as e:
+            log.error(f"  Derivation failed: {e}")
+            raise HTTPException(status_code=400, detail=f"Derivation failed for account_index={pair.account_index}, address_index={pair.address_index}: {e}")
+
+    # ------------------------------------------------------------------ Step 2
+    log.info("--- Step 2: Fetch UTXOs for all derived addresses ---")
+    all_utxos = []
+    total_input_value = 0
+    for entry in derived:
+        address = entry["address"]
+        log.info(f"Fetching UTXOs for {address}")
+        try:
+            script_hash = address_to_scripthash(address)
+            utxos = await electrum_client.list_unspent(script_hash)
+            log.info(f"  Found {len(utxos)} UTXO(s)")
+            for utxo in utxos:
+                log.info(f"    tx_hash={utxo['tx_hash']}, tx_pos={utxo['tx_pos']}, value={utxo['value']}, height={utxo['height']}")
+                all_utxos.append({**utxo, "wif": entry["wif"]})
+                total_input_value += utxo["value"]
+        except Exception as e:
+            log.error(f"  Failed to fetch UTXOs: {e}")
+            raise HTTPException(status_code=500, detail=f"UTXO fetch failed for {address}: {e}")
+
+    if not all_utxos:
+        log.error("No UTXOs found for any input address")
+        raise HTTPException(status_code=400, detail="No UTXOs found for any input address")
+
+    log.info(f"Total input value: {total_input_value}")
+
+    # ------------------------------------------------------------------ Step 3
+    change_amount = total_input_value - request.target_amount - MINER_FEE
+    log.info("--- Step 3: Calculate amounts ---")
+    log.info(f"  Total inputs:  {total_input_value}")
+    log.info(f"  Target amount: {request.target_amount}")
+    log.info(f"  Miner fee:     {MINER_FEE}")
+    log.info(f"  Change amount: {change_amount}")
+
+    if change_amount < 0:
+        log.error(f"Insufficient funds: total={total_input_value}, needed={request.target_amount + MINER_FEE}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Insufficient funds: total UTXO value={total_input_value}, needed={request.target_amount + MINER_FEE}",
+        )
+
+    # ------------------------------------------------------------------ Step 4
+    log.info("--- Step 4: Build and sign transaction ---")
+    try:
+        from bitcoinlib.transactions import Transaction
+
+        bitcoinlib_network = "litecoin_testnet" if IS_TESTNET else "litecoin"
+        log.info(f"bitcoinlib network: {bitcoinlib_network}")
+
+        tx = Transaction(network=bitcoinlib_network)
+
+        for utxo in all_utxos:
+            log.info(f"Adding input: txid={utxo['tx_hash']}, output_n={utxo['tx_pos']}, value={utxo['value']}")
+            tx.add_input(
+                prev_txid=utxo["tx_hash"],
+                output_n=utxo["tx_pos"],
+                keys=utxo["wif"],
+                witness_type="segwit",
+                value=utxo["value"],
+            )
+
+        log.info(f"Adding output: {request.target_amount} -> {request.target_address}")
+        tx.add_output(request.target_amount, request.target_address)
+
+        if change_amount > 0:
+            log.info(f"Adding change: {change_amount} -> {request.change_address}")
+            tx.add_output(change_amount, request.change_address)
+        else:
+            log.info("No change output needed (amount=0)")
+
+        log.info("Signing transaction...")
+        tx.sign()
+        raw_tx_hex = tx.as_hex()
+        log.info(f"Raw tx hex ({len(raw_tx_hex)} chars): {raw_tx_hex[:64]}...")
+    except Exception as e:
+        log.error(f"Transaction construction/signing failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Transaction build/sign failed: {e}")
+
+    # ------------------------------------------------------------------ Step 5
+    log.info("--- Step 5: Broadcast ---")
+    try:
+        tx_hash = await electrum_client.broadcast_transaction(raw_tx_hex)
+        log.info(f"✓ Broadcast success: {tx_hash}")
+    except Exception as e:
+        log.error(f"Broadcast failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Broadcast failed: {e}")
+
+    log.info("=" * 60)
+    log.info("BUILD-AND-SEND COMPLETE")
+    log.info("=" * 60)
+
+    return {
+        "tx_hash": tx_hash,
+        "raw_tx": raw_tx_hex,
+        "total_input": total_input_value,
+        "target_amount": request.target_amount,
+        "miner_fee": MINER_FEE,
+        "change_amount": change_amount,
+        "change_address": request.change_address,
+        "utxo_count": len(all_utxos),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }

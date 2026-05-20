@@ -24,6 +24,6 @@ try:
     if resp.status_code == 200:
         print(f"\n✓ Broadcast success — tx_hash: {resp.json().get('tx_hash')}")
     else:
-        print(f"\n✗ Broadcast failed")
+        print("\n✗ Broadcast failed")
 except Exception as e:
     print(f"\n✗ Error: {e}")
