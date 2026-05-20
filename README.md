@@ -13,6 +13,7 @@ All script hash conversions are handled in memory. SQLite can optionally be adde
 - **Transaction History**: Get transaction history for multiple wallet addresses in a single batch request
 - **Transaction Details**: Fetch verbose transaction data for multiple tx hashes in a single batch request
 - **Balance Query**: Get confirmed and unconfirmed balances for wallet addresses
+- **List Unspent Outputs**: List UTXOs for wallet addresses (via `blockchain.scripthash.listunspent`)
 - **Block Height Subscription**: Real-time block height notifications via ElectrumX subscription
 - **Address-to-Script-Hash Conversion**: P2WPKH support for mainnet and testnet
 - **Comprehensive Error Handling**: Logging, connection recovery (1 reconnection attempt on failure)
@@ -217,6 +218,45 @@ Get confirmed and unconfirmed balances for wallet addresses.
 ```
 
 Balances are returned in satoshis (minimum coin units).
+
+### `POST /listunspent`
+
+List unspent transaction outputs (UTXOs) for wallet addresses.
+
+**Request:**
+```json
+{
+  "addresses": [
+    "tltc1qehvvqf4smytx8w3j8la9l3lvujqwnun4x6jqle",
+    "tltc1qayq6ppmzztpgy354r45lkp8vjdafnhtf0yhutm"
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "tltc1qehvvqf4smytx8w3j8la9l3lvujqwnun4x6jqle": {
+    "utxos": [
+      {
+        "tx_hash": "2b06e10d66e7d2c8b741aae7b3c45ff3e1a69978f42b6604f86e41756afb4c34",
+        "tx_pos": 1,
+        "height": 4716284,
+        "value": 1000000
+      }
+    ],
+    "count": 1,
+    "timestamp": "2026-05-20T21:35:11.392117+00:00"
+  },
+  "tltc1qayq6ppmzztpgy354r45lkp8vjdafnhtf0yhutm": {
+    "utxos": [],
+    "count": 0,
+    "timestamp": "2026-05-20T21:35:11.703188+00:00"
+  }
+}
+```
+
+Values are in satoshis (minimum coin units). Mempool transactions have `height: 0`.
 
 ## Running Tests
 

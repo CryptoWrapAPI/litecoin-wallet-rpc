@@ -93,6 +93,12 @@ class BalanceRequest(BaseModel):
     addresses: list[str]
 
 
+class ListUnspentRequest(BaseModel):
+    """Request for listing unspent outputs."""
+
+    addresses: list[str]
+
+
 # ============================================================================
 # ElectrumX Client
 # ============================================================================
@@ -334,6 +340,21 @@ class ElectrumXClient:
         balance = response.get("result", {})
         self.logger.info(f"✓ Got balance for {script_hash[:16]}...: {balance}")
         return balance
+
+    async def list_unspent(self, script_hash: str) -> list[dict]:
+        """List unspent outputs for a script hash."""
+        self.logger.debug(f"Listing unspent for {script_hash[:16]}...")
+
+        response = await self._send_request(
+            "blockchain.scripthash.listunspent", [script_hash]
+        )
+
+        if "error" in response:
+            raise RuntimeError(f"Listunspent query failed: {response['error']}")
+
+        utxos = response.get("result", [])
+        self.logger.info(f"✓ Got {len(utxos)} UTXOs for {script_hash[:16]}...")
+        return utxos
 
     async def subscribe_headers(self, callback):
         """Subscribe to block header notifications."""
@@ -604,6 +625,44 @@ async def get_balance(request: BalanceRequest):
             }
         except Exception as e:
             log.error(f"Error fetching balance for {address}: {e}")
+            raise HTTPException(
+                status_code=500, detail=f"Error querying ElectrumX: {e}"
+            )
+
+    return response
+
+
+@app.post("/listunspent")
+async def list_unspent(request: ListUnspentRequest):
+    """List unspent outputs for addresses."""
+    if not electrum_client:
+        raise HTTPException(status_code=503, detail="ElectrumX not connected")
+
+    log.info(f"Listunspent request for {len(request.addresses)} addresses")
+
+    script_hashes = []
+    addr_to_hash = {}
+    for addr in request.addresses:
+        try:
+            script_hash = address_to_scripthash(addr)
+            script_hashes.append(script_hash)
+            addr_to_hash[script_hash] = addr
+        except ValueError as e:
+            log.error(f"Invalid address {addr}: {e}")
+            raise HTTPException(status_code=400, detail=str(e))
+
+    response = {}
+    for script_hash in script_hashes:
+        address = addr_to_hash[script_hash]
+        try:
+            utxos = await electrum_client.list_unspent(script_hash)
+            response[address] = {
+                "utxos": utxos,
+                "count": len(utxos),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        except Exception as e:
+            log.error(f"Error listing unspent for {address}: {e}")
             raise HTTPException(
                 status_code=500, detail=f"Error querying ElectrumX: {e}"
             )

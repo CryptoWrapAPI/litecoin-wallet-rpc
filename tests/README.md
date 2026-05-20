@@ -21,6 +21,11 @@ Tests the `/history` endpoint — fetches transaction history for wallet address
 
 **Setup:** Add your Litecoin addresses (one per line) to `addrs.txt` in this directory. Lines starting with `#` are ignored.
 
+### `test_listunspent.py`
+Tests the `/listunspent` endpoint — fetches unspent transaction outputs (UTXOs) for wallet addresses.
+
+**Setup:** Add your Litecoin addresses (one per line) to `addrs.txt` in this directory. Lines starting with `#` are ignored.
+
 ### `test_transactions.py`
 Tests the `/transactions` endpoint — fetches verbose details for transaction hashes.
 
@@ -36,6 +41,7 @@ Tests the `/derive` endpoint — derives wallet addresses from a BIP84 master pr
 ```bash
 ../env12/bin/python test_health.py
 ../env12/bin/python test_history.py
+../env12/bin/python test_listunspent.py
 ../env12/bin/python test_transactions.py
 ../env12/bin/python test_derive.py
 ```
