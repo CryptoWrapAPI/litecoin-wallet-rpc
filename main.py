@@ -99,6 +99,12 @@ class ListUnspentRequest(BaseModel):
     addresses: list[str]
 
 
+class BroadcastRequest(BaseModel):
+    """Request for broadcasting a raw transaction."""
+
+    raw_tx: str
+
+
 # ============================================================================
 # ElectrumX Client
 # ============================================================================
@@ -516,6 +522,21 @@ class ElectrumXClient:
 
         return results
 
+    async def broadcast_transaction(self, raw_tx: str) -> str:
+        """Broadcast a raw transaction to the network."""
+        self.logger.debug(f"Broadcasting transaction ({len(raw_tx)} hex chars)")
+
+        response = await self._send_request(
+            "blockchain.transaction.broadcast", [raw_tx]
+        )
+
+        if "error" in response:
+            raise RuntimeError(f"Broadcast failed: {response['error']}")
+
+        tx_hash = response.get("result", "")
+        self.logger.info(f"✓ Transaction broadcast: {tx_hash}")
+        return tx_hash
+
 
 # ============================================================================
 # Global State
@@ -777,3 +798,30 @@ async def get_transactions(request: TransactionsRequest):
     except Exception as e:
         log.error(f"Error fetching transactions: {e}")
         raise HTTPException(status_code=500, detail=f"Error querying ElectrumX: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Development / internal endpoints (not documented in README)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/broadcast")
+async def broadcast_transaction(request: BroadcastRequest):
+    """Broadcast a raw transaction to the network."""
+    if not electrum_client:
+        raise HTTPException(status_code=503, detail="ElectrumX not connected")
+
+    log.info(f"Broadcast request ({len(request.raw_tx)} hex chars)")
+
+    if not request.raw_tx or not isinstance(request.raw_tx, str):
+        raise HTTPException(status_code=400, detail="raw_tx must be a non-empty hex string")
+
+    try:
+        tx_hash = await electrum_client.broadcast_transaction(request.raw_tx)
+        return {
+            "tx_hash": tx_hash,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        log.error(f"Error broadcasting transaction: {e}")
+        raise HTTPException(status_code=500, detail=f"Broadcast failed: {e}")
