@@ -1,4 +1,4 @@
 bip_utils==2.12.1
 fastapi[standard]==0.135.3
 python-dotenv==1.2.2
-bitcoinlib==0.12.2
+bitcoinlib==0.7.8
